@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Signal — Customer Churn Risk</title>
+    <title>RevenueGuard AI — Revenue Recovery Intelligence</title>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -13,9 +13,9 @@
         <div class="topbar-inner">
             <div class="logo">
                 <span class="logo-dot"></span>
-                <span class="logo-text">SIGNAL</span>
+                <span class="logo-text">REVENUEGUARD</span>
             </div>
-            <span class="topbar-sub">Churn risk monitor</span>
+            <span class="topbar-sub">AI revenue recovery monitor</span>
         </div>
     </header>
 
@@ -24,10 +24,10 @@
         <!-- LEFT: Form -->
         <section class="panel form-panel">
             <p class="panel-label">// Customer Record</p>
-            <h1 class="panel-title">Run a churn check</h1>
+            <h1 class="panel-title">Analyze customer revenue risk</h1>
             <p class="panel-desc">
-                Fill in the subscriber's account details. The model scores
-                the likelihood they cancel service in the next billing cycle.
+                Analyze churn probability, estimate revenue at risk, prioritize
+                recovery opportunities, and identify the recommended next action.
             </p>
 
             <form method="POST" action="/predict" class="churn-form">
@@ -39,12 +39,13 @@
                         <div class="field">
                             <label for="tenure">Tenure (months)</label>
                             <input type="number" id="tenure" name="tenure" min="1" max="72"
-                                   value="{{ form_data['tenure'] if form_data else 12 }}" required>
+                                   value="{{ form_data['tenure'] if form_data else '' }}" required>
                         </div>
                         <div class="field">
                             <label for="contract">Contract</label>
                             <select id="contract" name="contract" required>
-                                {% set c = form_data['contract'] if form_data else 'Month-to-month' %}
+                                {% set c = form_data['contract'] if form_data else '' %}
+                                <option value="" disabled {% if not c %}selected{% endif %}>Select contract</option>
                                 <option value="Month-to-month" {% if c == 'Month-to-month' %}selected{% endif %}>Month-to-month</option>
                                 <option value="One year" {% if c == 'One year' %}selected{% endif %}>One year</option>
                                 <option value="Two year" {% if c == 'Two year' %}selected{% endif %}>Two year</option>
@@ -56,12 +57,12 @@
                         <div class="field">
                             <label for="monthly">Monthly charges (₹)</label>
                             <input type="number" id="monthly" name="monthly" step="0.01" min="0"
-                                   value="{{ form_data['monthly'] if form_data else 70.00 }}" required>
+                                   value="{{ form_data['monthly'] if form_data else '' }}" required>
                         </div>
                         <div class="field">
                             <label for="total">Total charges (₹)</label>
                             <input type="number" id="total" name="total" step="0.01" min="0"
-                                   value="{{ form_data['total'] if form_data else 840.00 }}" required>
+                                   value="{{ form_data['total'] if form_data else '' }}" required>
                         </div>
                     </div>
 
@@ -69,7 +70,8 @@
                         <div class="field">
                             <label for="payment">Payment method</label>
                             <select id="payment" name="payment" required>
-                                {% set p = form_data['payment'] if form_data else 'Electronic check' %}
+                                {% set p = form_data['payment'] if form_data else '' %}
+                                <option value="" disabled {% if not p %}selected{% endif %}>Select payment method</option>
                                 <option value="Electronic check" {% if p == 'Electronic check' %}selected{% endif %}>Electronic check</option>
                                 <option value="Mailed check" {% if p == 'Mailed check' %}selected{% endif %}>Mailed check</option>
                                 <option value="Bank transfer" {% if p == 'Bank transfer' %}selected{% endif %}>Bank transfer</option>
@@ -79,10 +81,18 @@
                         <div class="field field-toggle">
                             <label>Paperless billing</label>
                             <div class="toggle-row" data-name="paperless">
-                                {% set pl = form_data['paperless'] if form_data else 'Yes' %}
-                                <input type="radio" name="paperless" id="paperless-yes" value="Yes" {% if pl == 'Yes' %}checked{% endif %}>
+                                {% set pl = form_data['paperless'] if form_data else '' %}
+                                <input type="radio" name="paperless" id="paperless-yes"
+                                    value="Yes"
+                                    {% if pl == 'Yes' %}checked{% endif %}
+                                    required>
+
                                 <label for="paperless-yes" class="toggle">Yes</label>
-                                <input type="radio" name="paperless" id="paperless-no" value="No" {% if pl == 'No' %}checked{% endif %}>
+
+                                <input type="radio" name="paperless" id="paperless-no"
+                                    value="No"
+                                    {% if pl == 'No' %}checked{% endif %}>
+
                                 <label for="paperless-no" class="toggle">No</label>
                             </div>
                         </div>
@@ -96,7 +106,8 @@
                         <div class="field">
                             <label for="internet">Internet service</label>
                             <select id="internet" name="internet" required>
-                                {% set i = form_data['internet'] if form_data else 'Fiber optic' %}
+                                {% set i = form_data['internet'] if form_data else '' %}
+                                <option value="" disabled {% if not i %}selected{% endif %}>Select internet service</option>
                                 <option value="DSL" {% if i == 'DSL' %}selected{% endif %}>DSL</option>
                                 <option value="Fiber optic" {% if i == 'Fiber optic' %}selected{% endif %}>Fiber optic</option>
                                 <option value="No" {% if i == 'No' %}selected{% endif %}>No internet</option>
@@ -105,10 +116,18 @@
                         <div class="field field-toggle">
                             <label>Phone service</label>
                             <div class="toggle-row" data-name="phone">
-                                {% set ph = form_data['phone'] if form_data else 'Yes' %}
-                                <input type="radio" name="phone" id="phone-yes" value="Yes" {% if ph == 'Yes' %}checked{% endif %}>
+                                {% set ph = form_data['phone'] if form_data else '' %}
+                                <input type="radio" name="phone" id="phone-yes"
+                                    value="Yes"
+                                    {% if ph == 'Yes' %}checked{% endif %}
+                                    required>
+
                                 <label for="phone-yes" class="toggle">Yes</label>
-                                <input type="radio" name="phone" id="phone-no" value="No" {% if ph == 'No' %}checked{% endif %}>
+
+                                <input type="radio" name="phone" id="phone-no"
+                                    value="No"
+                                    {% if ph == 'No' %}checked{% endif %}>
+
                                 <label for="phone-no" class="toggle">No</label>
                             </div>
                         </div>
@@ -118,30 +137,54 @@
                         <div class="field field-toggle">
                             <label>Online security</label>
                             <div class="toggle-row" data-name="security">
-                                {% set sec = form_data['security'] if form_data else 'No' %}
-                                <input type="radio" name="security" id="security-yes" value="Yes" {% if sec == 'Yes' %}checked{% endif %}>
+                                {% set sec = form_data['security'] if form_data else '' %}
+                                <input type="radio" name="security" id="security-yes"
+                                    value="Yes"
+                                    {% if sec == 'Yes' %}checked{% endif %}
+                                    required>
+
                                 <label for="security-yes" class="toggle">Yes</label>
-                                <input type="radio" name="security" id="security-no" value="No" {% if sec == 'No' %}checked{% endif %}>
+
+                                <input type="radio" name="security" id="security-no"
+                                    value="No"
+                                    {% if sec == 'No' %}checked{% endif %}>
+
                                 <label for="security-no" class="toggle">No</label>
                             </div>
                         </div>
                         <div class="field field-toggle">
                             <label>Tech support</label>
                             <div class="toggle-row" data-name="tech">
-                                {% set tech = form_data['tech'] if form_data else 'No' %}
-                                <input type="radio" name="tech" id="tech-yes" value="Yes" {% if tech == 'Yes' %}checked{% endif %}>
+                                {% set tech = form_data['tech'] if form_data else '' %}
+                                <input type="radio" name="tech" id="tech-yes"
+                                    value="Yes"
+                                    {% if tech == 'Yes' %}checked{% endif %}
+                                    required>
+
                                 <label for="tech-yes" class="toggle">Yes</label>
-                                <input type="radio" name="tech" id="tech-no" value="No" {% if tech == 'No' %}checked{% endif %}>
+
+                                <input type="radio" name="tech" id="tech-no"
+                                    value="No"
+                                    {% if tech == 'No' %}checked{% endif %}>
+
                                 <label for="tech-no" class="toggle">No</label>
                             </div>
                         </div>
                         <div class="field field-toggle">
                             <label>Streaming TV</label>
                             <div class="toggle-row" data-name="streaming">
-                                {% set st = form_data['streaming'] if form_data else 'Yes' %}
-                                <input type="radio" name="streaming" id="streaming-yes" value="Yes" {% if st == 'Yes' %}checked{% endif %}>
+                                {% set st = form_data['streaming'] if form_data else '' %}
+                                <input type="radio" name="streaming" id="streaming-yes"
+                                    value="Yes"
+                                    {% if st == 'Yes' %}checked{% endif %}
+                                    required>
+
                                 <label for="streaming-yes" class="toggle">Yes</label>
-                                <input type="radio" name="streaming" id="streaming-no" value="No" {% if st == 'No' %}checked{% endif %}>
+
+                                <input type="radio" name="streaming" id="streaming-no"
+                                    value="No"
+                                    {% if st == 'No' %}checked{% endif %}>
+
                                 <label for="streaming-no" class="toggle">No</label>
                             </div>
                         </div>
@@ -155,7 +198,8 @@
                         <div class="field">
                             <label for="gender">Gender</label>
                             <select id="gender" name="gender" required>
-                                {% set g = form_data['gender'] if form_data else 'Female' %}
+                                {% set g = form_data['gender'] if form_data else '' %}
+                                <option value="" disabled {% if not g %}selected{% endif %}>Select gender</option>
                                 <option value="Female" {% if g == 'Female' %}selected{% endif %}>Female</option>
                                 <option value="Male" {% if g == 'Male' %}selected{% endif %}>Male</option>
                             </select>
@@ -163,20 +207,36 @@
                         <div class="field field-toggle">
                             <label>Senior citizen</label>
                             <div class="toggle-row" data-name="senior">
-                                {% set sr = form_data['senior'] if form_data else '0' %}
-                                <input type="radio" name="senior" id="senior-yes" value="1" {% if sr == '1' %}checked{% endif %}>
+                                {% set sr = form_data['senior'] if form_data else '' %}
+                                <input type="radio" name="senior" id="senior-yes"
+                                    value="1"
+                                    {% if sr == '1' %}checked{% endif %}
+                                    required>
+
                                 <label for="senior-yes" class="toggle">Yes</label>
-                                <input type="radio" name="senior" id="senior-no" value="0" {% if sr == '0' %}checked{% endif %}>
+
+                                <input type="radio" name="senior" id="senior-no"
+                                    value="0"
+                                    {% if sr == '0' %}checked{% endif %}>
+
                                 <label for="senior-no" class="toggle">No</label>
                             </div>
                         </div>
                         <div class="field field-toggle">
                             <label>Has partner</label>
                             <div class="toggle-row" data-name="partner">
-                                {% set pt = form_data['partner'] if form_data else 'No' %}
-                                <input type="radio" name="partner" id="partner-yes" value="Yes" {% if pt == 'Yes' %}checked{% endif %}>
+                                {% set pt = form_data['partner'] if form_data else '' %}
+                                <input type="radio" name="partner" id="partner-yes"
+                                    value="Yes"
+                                    {% if pt == 'Yes' %}checked{% endif %}
+                                    required>
+
                                 <label for="partner-yes" class="toggle">Yes</label>
-                                <input type="radio" name="partner" id="partner-no" value="No" {% if pt == 'No' %}checked{% endif %}>
+
+                                <input type="radio" name="partner" id="partner-no"
+                                    value="No"
+                                    {% if pt == 'No' %}checked{% endif %}>
+
                                 <label for="partner-no" class="toggle">No</label>
                             </div>
                         </div>
@@ -186,10 +246,18 @@
                         <div class="field field-toggle">
                             <label>Has dependents</label>
                             <div class="toggle-row" data-name="dependents">
-                                {% set dp = form_data['dependents'] if form_data else 'No' %}
-                                <input type="radio" name="dependents" id="dependents-yes" value="Yes" {% if dp == 'Yes' %}checked{% endif %}>
+                                {% set dp = form_data['dependents'] if form_data else '' %}
+                                <input type="radio" name="dependents" id="dependents-yes"
+                                    value="Yes"
+                                    {% if dp == 'Yes' %}checked{% endif %}
+                                    required>
+
                                 <label for="dependents-yes" class="toggle">Yes</label>
-                                <input type="radio" name="dependents" id="dependents-no" value="No" {% if dp == 'No' %}checked{% endif %}>
+
+                                <input type="radio" name="dependents" id="dependents-no"
+                                    value="No"
+                                    {% if dp == 'No' %}checked{% endif %}>
+
                                 <label for="dependents-no" class="toggle">No</label>
                             </div>
                         </div>
@@ -197,7 +265,7 @@
                 </fieldset>
 
                 <button type="submit" class="submit-btn">
-                    <span>Run churn check</span>
+                    <span>Analyze revenue risk</span>
                     <span class="btn-icon">▶</span>
                 </button>
             </form>
@@ -216,58 +284,229 @@
             <h2 class="panel-title-sm">Risk reading</h2>
 
             {% if result %}
-                <div class="gauge-wrap risk-{{ result.risk_level | lower }}">
-                    <div class="gauge">
-                        <svg viewBox="0 0 200 110" class="gauge-svg">
-                            <path d="M 10 100 A 90 90 0 0 1 190 100" class="gauge-track"/>
-                            <path d="M 10 100 A 90 90 0 0 1 190 100" class="gauge-fill"
-                                  style="stroke-dashoffset: {{ 282.6 - (282.6 * result.probability / 100) }};"/>
-                        </svg>
-                        <div class="gauge-readout">
-                            <span class="gauge-value">{{ result.probability }}%</span>
-                            <span class="gauge-caption">churn probability</span>
-                        </div>
-                    </div>
-                </div>
 
-                <div class="verdict">
-                    <span class="verdict-badge">{{ result.risk_level }} risk</span>
-                    <p class="verdict-text">
-                        {% if result.will_churn %}
-                            This customer is likely to <strong>cancel</strong> within the next cycle.
-                            Recommend a retention offer or proactive outreach.
-                        {% else %}
-                            This customer is likely to <strong>stay</strong>.
-                            No immediate action needed — continue standard engagement.
-                        {% endif %}
-                    </p>
-                </div>
+<div class="gauge-wrap risk-{{ result.risk_level | lower }}">
+    <div class="gauge">
 
-                <dl class="readout-list">
-                    <div class="readout-row">
-                        <dt>Contract</dt>
-                        <dd>{{ form_data['contract'] }}</dd>
-                    </div>
-                    <div class="readout-row">
-                        <dt>Tenure</dt>
-                        <dd>{{ form_data['tenure'] }} months</dd>
-                    </div>
-                    <div class="readout-row">
-                        <dt>Internet</dt>
-                        <dd>{{ form_data['internet'] }}</dd>
-                    </div>
-                    <div class="readout-row">
-                        <dt>Payment</dt>
-                        <dd>{{ form_data['payment'] }}</dd>
-                    </div>
-                </dl>
-            {% else %}
-                <div class="empty-state">
-                    <div class="empty-icon">◌</div>
-                    <p>No reading yet.</p>
-                    <p class="empty-sub">Submit the form to score this customer.</p>
-                </div>
-            {% endif %}
+        <svg viewBox="0 0 200 110" class="gauge-svg">
+            <path
+                d="M 10 100 A 90 90 0 0 1 190 100"
+                class="gauge-track"
+            />
+
+            <path
+                d="M 10 100 A 90 90 0 0 1 190 100"
+                class="gauge-fill"
+                style="stroke-dashoffset: {{ 282.6 - (282.6 * result.probability / 100) }};"
+            />
+        </svg>
+
+        <div class="gauge-readout">
+            <span class="gauge-value">
+                {{ result.probability }}%
+            </span>
+
+            <span class="gauge-caption">
+                churn probability
+            </span>
+        </div>
+
+    </div>
+</div>
+
+
+<!-- Risk Verdict -->
+
+<div class="verdict">
+
+    <span class="verdict-badge">
+        {{ result.risk_level }} risk
+    </span>
+
+    <p class="verdict-text">
+
+        {% if result.will_churn %}
+
+        Customer is predicted to
+        <strong>churn</strong>.
+
+        Recovery intervention is recommended.
+
+        {% else %}
+
+        Customer is predicted to
+        <strong>stay</strong>.
+
+        Continue standard engagement.
+
+        {% endif %}
+
+    </p>
+
+</div>
+
+
+<!-- Revenue Impact -->
+
+<div class="metric-grid">
+
+    <div class="metric-card">
+        <span class="metric-label">
+            REVENUE AT RISK
+        </span>
+
+        <strong>
+            ₹{{ "%.2f"|format(result.revenue_at_risk) }}
+        </strong>
+
+        <small>expected monthly revenue at risk</small>
+    </div>
+
+
+    <div class="metric-card">
+        <span class="metric-label">
+            RECOVERY PRIORITY
+        </span>
+
+        <strong>
+            {{ result.priority_score }}
+        </strong>
+
+        <small>
+            {{ result.priority_label }} priority
+        </small>
+    </div>
+
+</div>
+
+
+<!-- Recovery Action -->
+
+<div class="recovery-box">
+
+    <p class="panel-label">
+        // Recommended Recovery Action
+    </p>
+
+    <h3>
+        {{ result.recovery_action.action }}
+    </h3>
+
+    <div class="action-meta">
+        <span>
+            {{ result.recovery_action.urgency }} urgency
+        </span>
+
+        <span>
+            {{ result.recovery_action.channel }}
+        </span>
+    </div>
+
+    <p>
+        {{ result.recovery_action.description }}
+    </p>
+
+</div>
+
+
+<!-- Why At Risk -->
+
+<div class="risk-factors">
+
+    <p class="panel-label">
+        // Why this customer is at risk
+    </p>
+
+    {% for factor in result.risk_factors %}
+
+    <div class="factor-row">
+
+        <div>
+            <strong>
+                {{ factor.factor }}
+            </strong>
+
+            <small>
+                {{ factor.reason }}
+            </small>
+        </div>
+
+        <span class="factor-impact">
+            {{ factor.impact }}
+        </span>
+
+    </div>
+
+    {% endfor %}
+
+</div>
+
+
+<!-- Customer Data -->
+
+<dl class="readout-list">
+
+    <div class="readout-row">
+        <dt>Contract</dt>
+        <dd>{{ form_data['contract'] }}</dd>
+    </div>
+
+    <div class="readout-row">
+        <dt>Tenure</dt>
+        <dd>{{ form_data['tenure'] }} months</dd>
+    </div>
+
+    <div class="readout-row">
+        <dt>Monthly charges</dt>
+        <dd>₹{{ form_data['monthly'] }}</dd>
+    </div>
+
+    <div class="readout-row">
+        <dt>Internet</dt>
+        <dd>{{ form_data['internet'] }}</dd>
+    </div>
+
+    <div class="readout-row">
+        <dt>Payment</dt>
+        <dd>{{ form_data['payment'] }}</dd>
+    </div>
+
+</dl>
+
+
+<!-- Recovery Message -->
+
+<div class="message-box">
+
+    <p class="panel-label">
+        // Suggested Customer Message
+    </p>
+
+    <p>
+        {{ result.recovery_message }}
+    </p>
+
+</div>
+
+{% else %}
+
+<div class="empty-state">
+
+    <div class="empty-icon">
+        ◌
+    </div>
+
+    <p>
+        No reading yet.
+    </p>
+
+    <p class="empty-sub">
+        Submit the form to analyze churn and revenue risk.
+    </p>
+
+</div>
+
+{% endif %}
 
             <div class="model-info">
                 <p class="panel-label">// Model</p>
@@ -278,15 +517,19 @@
                     </div>
                     <div class="readout-row">
                         <dt>Accuracy</dt>
-                        <dd>~74%</dd>
+                        <dd>{{ metrics.accuracy }}%</dd>
                     </div>
                     <div class="readout-row">
                         <dt>ROC-AUC</dt>
-                        <dd>~0.75</dd>
+                        <dd>{{ metrics.roc_auc }}</dd>
                     </div>
                     <div class="readout-row">
                         <dt>Trained on</dt>
-                        <dd>2,000 records</dd>
+                        <dd>{{ "{:,}".format(metrics.training_records) }} records</dd>
+                    </div>
+                    <div class="readout-row">
+                        <dt>F1 Score</dt>
+                        <dd>{{ metrics.f1_score }}</dd>
                     </div>
                 </dl>
             </div>

@@ -1,0 +1,6 @@
+{
+    "accuracy": 68.0,
+    "f1_score": 0.5493,
+    "roc_auc": 0.7412,
+    "training_records": 2000
+}

@@ -122,6 +122,20 @@ acc = accuracy_score(y_test, y_pred)
 f1  = f1_score(y_test, y_pred)
 auc = roc_auc_score(y_test, y_pred_prob)
 
+import json
+
+metrics = {
+    "accuracy": round(acc * 100, 2),
+    "f1_score": round(f1, 4),
+    "roc_auc": round(auc, 4),
+    "training_records": len(df)
+}
+
+with open("model/metrics.json", "w") as f:
+    json.dump(metrics, f, indent=4)
+
+print("✅ Saved: model/metrics.json")
+
 print(f"✅ Model trained!")
 print(f"   Accuracy: {acc*100:.2f}%")
 print(f"   F1 Score: {f1:.4f}")

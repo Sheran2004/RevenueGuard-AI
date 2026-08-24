@@ -509,3 +509,151 @@ select:focus {
         transition: none !important;
     }
 }
+
+/* ==========================================
+   Revenue Recovery Intelligence
+   ========================================== */
+
+.metric-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 24px 0;
+}
+
+.metric-card {
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    padding: 18px;
+    border-radius: 6px;
+}
+
+.metric-label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+    margin-bottom: 10px;
+}
+
+.metric-card strong {
+    display: block;
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    margin-bottom: 5px;
+}
+
+.metric-card small {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+}
+
+
+/* Recovery Action */
+
+.recovery-box {
+    margin-top: 24px;
+    padding: 20px;
+    border: 1px solid var(--low);
+    background: var(--low-bg);
+    border-radius: 6px;
+}
+
+.recovery-box h3 {
+    font-family: var(--mono);
+    font-size: 1.05rem;
+    margin-bottom: 10px;
+}
+
+.recovery-box p:last-child {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    line-height: 1.55;
+}
+
+.action-meta {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.action-meta span {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    border: 1px solid var(--line);
+    padding: 5px 8px;
+    color: var(--text-dim);
+}
+
+
+/* Risk factors */
+
+.risk-factors {
+    margin-top: 28px;
+}
+
+.factor-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.factor-row strong {
+    display: block;
+    font-size: 0.82rem;
+}
+
+.factor-row small {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    line-height: 1.4;
+}
+
+.factor-impact {
+    flex-shrink: 0;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 5px 8px;
+    border: 1px solid var(--line);
+}
+
+
+/* Suggested message */
+
+.message-box {
+    margin-top: 28px;
+    padding: 20px;
+    border: 1px dashed var(--line);
+    background: var(--panel-2);
+    border-radius: 6px;
+}
+
+.message-box > p:last-child {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    line-height: 1.6;
+}
+
+
+/* Responsive */
+
+@media (max-width: 600px) {
+
+    .metric-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .factor-row {
+        align-items: flex-start;
+    }
+
+}
