@@ -10,7 +10,7 @@ import os
 import json
 
 app = Flask(__name__)
-app.secret_key = "revenueguard-secret-key"
+app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-this-secret-key")
 
 # ---------------------------------------------------------
 # Load trained model and scaler
@@ -454,6 +454,74 @@ def predict():
     except Exception as e:
         session["error"] = str(e)
         return redirect("/")
+
+
+
+# ---------------------------------------------------------
+# Dataset analytics dashboard (descriptive, based on CSV)
+# ---------------------------------------------------------
+
+DATA_PATH = os.path.join(BASE_DIR, "model", "churn_data.csv")
+
+
+def build_dashboard_data():
+    """Build descriptive analytics from the bundled dataset."""
+    data = pd.read_csv(DATA_PATH)
+    data["Churn"] = pd.to_numeric(data["Churn"], errors="coerce").fillna(0).astype(int)
+    data["MonthlyCharges"] = pd.to_numeric(data["MonthlyCharges"], errors="coerce").fillna(0)
+    data["Tenure"] = pd.to_numeric(data["Tenure"], errors="coerce").fillna(0)
+
+    total = int(len(data))
+    churned = int(data["Churn"].sum())
+    retained = total - churned
+    churn_rate = round((churned / total * 100), 1) if total else 0
+    monthly_revenue = round(float(data["MonthlyCharges"].sum()), 2)
+    churned_monthly_revenue = round(float(data.loc[data["Churn"] == 1, "MonthlyCharges"].sum()), 2)
+
+    def churn_by(column, labels=None):
+        grouped = data.groupby(column, dropna=False).agg(
+            customers=("Churn", "size"), churned=("Churn", "sum")
+        ).reset_index()
+        grouped["rate"] = (grouped["churned"] / grouped["customers"] * 100).round(1)
+        if labels:
+            grouped[column] = grouped[column].map(labels).fillna(grouped[column].astype(str))
+        return {
+            "labels": grouped[column].astype(str).tolist(),
+            "rates": grouped["rate"].astype(float).tolist(),
+            "customers": grouped["customers"].astype(int).tolist(),
+            "churned": grouped["churned"].astype(int).tolist()
+        }
+
+    data["TenureGroup"] = pd.cut(
+        data["Tenure"], bins=[-1, 12, 24, 48, 72],
+        labels=["0–12 months", "13–24 months", "25–48 months", "49–72 months"]
+    )
+    return {
+        "total": total, "churned": churned, "retained": retained,
+        "churn_rate": churn_rate, "monthly_revenue": monthly_revenue,
+        "churned_monthly_revenue": churned_monthly_revenue,
+        "retention_rate": round(100 - churn_rate, 1),
+        "churn_distribution": {"labels": ["Retained", "Churned"], "values": [retained, churned]},
+        "contract": churn_by("Contract"),
+        "payment": churn_by("PaymentMethod"),
+        "internet": churn_by("InternetService"),
+        "tenure": churn_by("TenureGroup"),
+        "monthly_charges": {
+            "retained": round(float(data.loc[data["Churn"] == 0, "MonthlyCharges"].mean()), 2),
+            "churned": round(float(data.loc[data["Churn"] == 1, "MonthlyCharges"].mean()), 2)
+        },
+        "updated_label": "Calculated from bundled churn_data.csv"
+    }
+
+
+@app.route("/dashboard")
+def dashboard():
+    try:
+        dashboard_data = build_dashboard_data()
+        return render_template("dashboard.html", dashboard=dashboard_data, metrics=metrics)
+    except Exception:
+        app.logger.exception("Could not build analytics dashboard")
+        return "Analytics dashboard could not load. Please check model/churn_data.csv.", 500
 
 
 # ---------------------------------------------------------

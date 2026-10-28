@@ -133,3 +133,16 @@ B.Tech CSE | NIET Greater Noida
 
 ## 📄 License
 MIT License
+
+
+## 📊 Analytics Dashboard
+
+The Flask app now includes a dataset analytics dashboard at `/dashboard`, linked from the customer analyzer page. It calculates descriptive KPIs and charts from `model/churn_data.csv`:
+
+- Total, churned, and retained customer counts
+- Historical churn rate and retention rate
+- Recorded monthly charges associated with churned customers
+- Churn rates by contract, payment method, internet service, and tenure group
+- Average monthly charges for retained versus churned records
+
+Run the app as usual, then open `http://127.0.0.1:5001/dashboard`. Charts use Chart.js via CDN, so an internet connection is needed to render the charts. Dashboard statistics are historical dataset analytics and are separate from individual Random Forest predictions.
