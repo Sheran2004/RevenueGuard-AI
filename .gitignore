@@ -1,6 +1,10 @@
+.env
+.env.*
+!web_app/.env.example
 .venv/
 __pycache__/
+.pytest_cache/
 *.pyc
-.env
-.vscode/
-*.zip
+*.db
+*.sqlite
+*.sqlite3

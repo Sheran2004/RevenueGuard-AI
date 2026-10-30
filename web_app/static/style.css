@@ -657,3 +657,28 @@ select:focus {
     }
 
 }
+
+/* Analyzer page navigation buttons */
+.topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    flex-wrap: wrap;
+}
+
+.dashboard-link {
+    font-family: var(--mono);
+    font-size: .78rem;
+    color: var(--low);
+    text-decoration: none;
+    border: 1px solid var(--line);
+    padding: 9px 13px;
+    border-radius: 4px;
+    transition: .2s;
+}
+
+.dashboard-link:hover,
+.dashboard-link.active {
+    background: var(--low-bg);
+    border-color: var(--low);
+}

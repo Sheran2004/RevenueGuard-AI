@@ -1,0 +1,747 @@
+"""
+RevenueGuard AI - Customer Churn & Revenue Recovery
+Author: Mohammad Sheran Asgar
+"""
+
+from flask import Flask, render_template, request, jsonify, session, redirect, flash, url_for
+import pickle
+import pandas as pd
+import os
+import json
+import sqlite3
+import csv
+import io
+from datetime import datetime, timezone
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-this-secret-key")
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB CSV upload limit
+
+# ---------------------------------------------------------
+# Load trained model and scaler
+# ---------------------------------------------------------
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "revenueguard.db"))
+
+# Customer records and outreach drafts are stored in SQLite. This persists on a
+# persistent disk locally; on ephemeral hosting, configure DATABASE_PATH to a persistent volume.
+def db_connect():
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    os.makedirs(os.path.dirname(os.path.abspath(DATABASE_PATH)), exist_ok=True)
+    with db_connect() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, external_id TEXT, name TEXT,
+            email TEXT, phone TEXT, consent INTEGER NOT NULL DEFAULT 0,
+            gender TEXT NOT NULL, senior TEXT NOT NULL, partner TEXT NOT NULL,
+            dependents TEXT NOT NULL, tenure INTEGER NOT NULL, phone_service TEXT NOT NULL,
+            internet TEXT NOT NULL, security TEXT NOT NULL, tech TEXT NOT NULL,
+            streaming TEXT NOT NULL, contract TEXT NOT NULL, paperless TEXT NOT NULL,
+            payment TEXT NOT NULL, monthly REAL NOT NULL, total REAL NOT NULL,
+            churn_probability REAL NOT NULL, risk_level TEXT NOT NULL,
+            revenue_at_risk REAL NOT NULL, priority_score REAL NOT NULL,
+            recovery_action TEXT NOT NULL, recovery_message TEXT NOT NULL,
+            outreach_status TEXT NOT NULL DEFAULT 'Draft', source TEXT NOT NULL DEFAULT 'CSV import',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS outreach_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL,
+            channel TEXT NOT NULL, status TEXT NOT NULL, message TEXT NOT NULL,
+            note TEXT, created_at TEXT NOT NULL,
+            FOREIGN KEY(customer_id) REFERENCES customers(id)
+        )""")
+
+init_db()
+
+CSV_ALIASES = {
+    "gender": ["Gender", "gender"], "senior": ["SeniorCitizen", "senior", "Senior Citizen"],
+    "partner": ["Partner", "partner"], "dependents": ["Dependents", "dependents"],
+    "tenure": ["Tenure", "tenure"], "phone": ["PhoneService", "phone_service", "Phone Service"],
+    "internet": ["InternetService", "internet", "Internet Service"],
+    "security": ["OnlineSecurity", "security", "Online Security"],
+    "tech": ["TechSupport", "tech", "Tech Support"], "streaming": ["StreamingTV", "streaming", "Streaming TV"],
+    "contract": ["Contract", "contract"], "paperless": ["PaperlessBilling", "paperless", "Paperless Billing"],
+    "payment": ["PaymentMethod", "payment", "Payment Method"],
+    "monthly": ["MonthlyCharges", "monthly", "Monthly Charges"], "total": ["TotalCharges", "total", "Total Charges"],
+    "external_id": ["CustomerID", "customer_id", "Customer Id", "id"],
+    "name": ["Name", "name", "CustomerName", "customer_name"],
+    "email": ["Email", "email", "EmailAddress", "email_address"],
+    "phone_number": ["Phone", "phone_number", "Mobile", "mobile", "PhoneNumber"],
+    "consent": ["Consent", "consent", "MarketingConsent", "marketing_consent", "OptIn", "opt_in"]
+}
+
+def first_value(row, field, default=""):
+    for col in CSV_ALIASES[field]:
+        if col in row and pd.notna(row[col]):
+            return str(row[col]).strip()
+    return default
+
+def yes_no(value, default="No"):
+    value = str(value).strip().lower()
+    if value in ("yes", "y", "true", "1", "1.0"): return "Yes"
+    if value in ("no", "n", "false", "0", "0.0"): return "No"
+    return default
+
+def row_to_form(row):
+    gender = first_value(row, "gender", "Female").title()
+    if gender not in GENDER_MAP: gender = "Female"
+    internet = first_value(row, "internet", "DSL")
+    if internet.lower() in ("fiber optic", "fiber"): internet = "Fiber optic"
+    elif internet.lower() == "no": internet = "No"
+    elif internet.lower() == "dsl": internet = "DSL"
+    else: internet = "DSL"
+    contract = first_value(row, "contract", "Month-to-month")
+    if contract not in CONTRACT_MAP: contract = "Month-to-month"
+    payment = first_value(row, "payment", "Electronic check")
+    if payment not in PAYMENT_MAP: payment = "Electronic check"
+    return {
+        "gender": gender, "senior": "1" if yes_no(first_value(row,"senior","0"),"No")=="Yes" else ("1" if first_value(row,"senior","0").strip() in ("1","1.0") else "0"),
+        "partner": yes_no(first_value(row,"partner","No")), "dependents": yes_no(first_value(row,"dependents","No")),
+        "tenure": str(max(1,min(72,int(float(first_value(row,"tenure","1") or 1))))),
+        "phone": yes_no(first_value(row,"phone","Yes")), "internet": internet,
+        "security": yes_no(first_value(row,"security","No")), "tech": yes_no(first_value(row,"tech","No")),
+        "streaming": yes_no(first_value(row,"streaming","No")), "contract": contract,
+        "paperless": yes_no(first_value(row,"paperless","No")), "payment": payment,
+        "monthly": str(max(0,float(first_value(row,"monthly","0") or 0))),
+        "total": str(max(0,float(first_value(row,"total","0") or 0)))
+    }
+
+def import_customer_csv(file_storage):
+    raw = file_storage.read()
+    if len(raw) > 8 * 1024 * 1024: raise ValueError("CSV file must be 8 MB or smaller.")
+    try: df = pd.read_csv(io.BytesIO(raw))
+    except Exception as exc: raise ValueError("Could not read this CSV. Please upload a valid comma-separated CSV file.") from exc
+    required = ["gender","senior","partner","dependents","tenure","phone","internet","security","tech","streaming","contract","paperless","payment","monthly","total"]
+    missing = [key for key in required if not any(c in df.columns for c in CSV_ALIASES[key])]
+    if missing: raise ValueError("CSV is missing required customer fields: " + ", ".join(missing) + ". Use the sample telco columns shown on this page.")
+    inserted = 0; errors = []
+    now = datetime.now(timezone.utc).isoformat()
+    with db_connect() as conn:
+        for idx, row in df.iterrows():
+            try:
+                form = row_to_form(row)
+                result = analyze_customer(form)
+                consent_value = first_value(row, "consent", "No")
+                consent = int(yes_no(consent_value, "No") == "Yes")
+                vals = (first_value(row,"external_id",f"CSV-{idx+1}"), first_value(row,"name",""),
+                    first_value(row,"email",""), first_value(row,"phone_number",""), consent,
+                    form["gender"], form["senior"], form["partner"], form["dependents"], int(form["tenure"]),
+                    form["phone"], form["internet"], form["security"], form["tech"], form["streaming"], form["contract"],
+                    form["paperless"], form["payment"], float(form["monthly"]), float(form["total"]),
+                    result["probability"], result["risk_level"], result["revenue_at_risk"], result["priority_score"],
+                    result["recovery_action"]["action"], result["recovery_message"], "Draft", "CSV import", now, now)
+                conn.execute("""INSERT INTO customers (external_id,name,email,phone,consent,gender,senior,partner,dependents,tenure,phone_service,internet,security,tech,streaming,contract,paperless,payment,monthly,total,churn_probability,risk_level,revenue_at_risk,priority_score,recovery_action,recovery_message,outreach_status,source,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", vals)
+                inserted += 1
+            except Exception as exc:
+                if len(errors) < 3: errors.append(f"Row {idx+2}: {str(exc)[:120]}")
+    return inserted, len(df), errors
+
+
+with open(os.path.join(BASE_DIR, "model", "churn_model.pkl"), "rb") as f:
+    model = pickle.load(f)
+
+with open(os.path.join(BASE_DIR, "model", "scaler.pkl"), "rb") as f:
+    scaler = pickle.load(f)
+
+with open(os.path.join(BASE_DIR, "model", "metrics.json"), "r") as f:
+    metrics = json.load(f)
+
+# ---------------------------------------------------------
+# Encoding maps - must match train_model.py
+# ---------------------------------------------------------
+
+GENDER_MAP = {
+    "Female": 0,
+    "Male": 1
+}
+
+YN_MAP = {
+    "No": 0,
+    "Yes": 1
+}
+
+INTERNET_MAP = {
+    "DSL": 0,
+    "Fiber optic": 1,
+    "No": 2
+}
+
+CONTRACT_MAP = {
+    "Month-to-month": 0,
+    "One year": 1,
+    "Two year": 2
+}
+
+PAYMENT_MAP = {
+    "Bank transfer": 0,
+    "Credit card": 1,
+    "Electronic check": 2,
+    "Mailed check": 3
+}
+
+FEATURE_COLS = [
+    "Gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "Tenure",
+    "PhoneService",
+    "InternetService",
+    "OnlineSecurity",
+    "TechSupport",
+    "StreamingTV",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges"
+]
+
+
+# ---------------------------------------------------------
+# Feature preparation
+# ---------------------------------------------------------
+
+def build_features(form):
+    """Convert form data into model-ready feature DataFrame."""
+
+    row = [
+        GENDER_MAP[form["gender"]],
+        int(form["senior"]),
+        YN_MAP[form["partner"]],
+        YN_MAP[form["dependents"]],
+        int(form["tenure"]),
+        YN_MAP[form["phone"]],
+        INTERNET_MAP[form["internet"]],
+        YN_MAP[form["security"]],
+        YN_MAP[form["tech"]],
+        YN_MAP[form["streaming"]],
+        CONTRACT_MAP[form["contract"]],
+        YN_MAP[form["paperless"]],
+        PAYMENT_MAP[form["payment"]],
+        float(form["monthly"]),
+        float(form["total"]),
+    ]
+
+    return pd.DataFrame([row], columns=FEATURE_COLS)
+
+
+# ---------------------------------------------------------
+# Revenue Recovery Intelligence
+# ---------------------------------------------------------
+
+def get_risk_level(probability):
+    if probability >= 0.60:
+        return "High"
+    elif probability >= 0.30:
+        return "Medium"
+    return "Low"
+
+
+def calculate_revenue_at_risk(monthly_charges, churn_probability):
+    """
+    Simple business-risk estimate.
+
+    Revenue at Risk = Monthly Charges × Churn Probability
+    This is an estimate, not guaranteed revenue loss.
+    """
+    return monthly_charges * churn_probability
+
+
+def calculate_priority_score(probability, monthly_charges, tenure, contract):
+    """
+    Recovery Priority Score.
+
+    Combines:
+    - churn probability
+    - monthly revenue exposure
+    - tenure
+    - contract type
+
+    Score is a prioritization heuristic, not a probability.
+    """
+
+    # Churn is the strongest signal.
+    risk_component = probability * 70
+
+    # Higher monthly revenue means higher business impact.
+    revenue_component = min(monthly_charges / 150.0, 1.0) * 20
+
+    # Short-tenure customers are often more vulnerable.
+    tenure_component = max(0, 10 - min(tenure, 10)) * 1.0
+
+    # Month-to-month customers are easier to lose.
+    contract_component = {
+        "Month-to-month": 10,
+        "One year": 5,
+        "Two year": 0
+    }.get(contract, 0)
+
+    score = (
+        risk_component
+        + revenue_component
+        + tenure_component
+        + contract_component
+    )
+
+    return round(min(score, 100), 1)
+
+
+def get_priority_label(score):
+    if score >= 70:
+        return "Critical"
+    elif score >= 45:
+        return "High"
+    elif score >= 25:
+        return "Medium"
+    return "Low"
+
+
+def get_risk_factors(form, probability):
+    """
+    Business-readable explanation based on customer attributes.
+
+    These are heuristic explanations, not SHAP values.
+    """
+
+    factors = []
+
+    if form["contract"] == "Month-to-month":
+        factors.append({
+            "factor": "Month-to-month contract",
+            "impact": "High",
+            "reason": "Flexible contracts generally provide less commitment."
+        })
+
+    if float(form["monthly"]) >= 80:
+        factors.append({
+            "factor": "High monthly charges",
+            "impact": "High",
+            "reason": "Higher recurring cost can increase price sensitivity."
+        })
+
+    if int(form["tenure"]) <= 12:
+        factors.append({
+            "factor": "Short customer tenure",
+            "impact": "Medium",
+            "reason": "Newer customers have had less time to establish loyalty."
+        })
+
+    if form["security"] == "No":
+        factors.append({
+            "factor": "No online security",
+            "impact": "Medium",
+            "reason": "Missing service features can reduce perceived value."
+        })
+
+    if form["tech"] == "No":
+        factors.append({
+            "factor": "No tech support",
+            "impact": "Medium",
+            "reason": "Lack of support may increase service friction."
+        })
+
+    if form["internet"] == "Fiber optic":
+        factors.append({
+            "factor": "Fiber optic service",
+            "impact": "Context",
+            "reason": "Premium service can correspond with higher monthly spend."
+        })
+
+    if form["payment"] == "Electronic check":
+        factors.append({
+            "factor": "Electronic check",
+            "impact": "Context",
+            "reason": "Payment-method patterns can be useful for retention monitoring."
+        })
+
+    # If no obvious heuristic factor exists.
+    if not factors:
+        factors.append({
+            "factor": "No dominant rule-based risk factor",
+            "impact": "Low",
+            "reason": "The ML model probability remains the primary risk signal."
+        })
+
+    # Limit to the most useful signals for the UI.
+    return factors[:5]
+
+
+def get_recovery_action(form, probability, priority_score):
+    """
+    Rule-based next-best-action engine.
+
+    The ML model predicts churn.
+    This layer converts the prediction into a business action.
+    """
+
+    if probability < 0.30:
+        return {
+            "action": "Standard engagement",
+            "urgency": "Low",
+            "description": "No immediate recovery intervention is recommended.",
+            "channel": "Normal customer engagement"
+        }
+
+    if form["contract"] == "Month-to-month" and probability >= 0.60:
+        return {
+            "action": "Retention offer",
+            "urgency": "Immediate",
+            "description": "Offer a personalized retention incentive or longer-term plan.",
+            "channel": "Retention outreach"
+        }
+
+    if int(form["tenure"]) <= 12 and probability >= 0.50:
+        return {
+            "action": "Onboarding intervention",
+            "urgency": "High",
+            "description": "Provide onboarding assistance and reinforce product value.",
+            "channel": "Customer success outreach"
+        }
+
+    if float(form["monthly"]) >= 80 and probability >= 0.50:
+        return {
+            "action": "Plan optimization",
+            "urgency": "High",
+            "description": "Review the customer's plan and identify a lower-friction option.",
+            "channel": "Account management"
+        }
+
+    if form["payment"] == "Electronic check" and probability >= 0.50:
+        return {
+            "action": "Payment experience review",
+            "urgency": "Medium",
+            "description": "Review payment experience and encourage a more convenient payment method.",
+            "channel": "Billing outreach"
+        }
+
+    if priority_score >= 45:
+        return {
+            "action": "Proactive retention outreach",
+            "urgency": "High",
+            "description": "Contact the customer before churn risk becomes a revenue loss.",
+            "channel": "Customer success outreach"
+        }
+
+    return {
+        "action": "Targeted engagement",
+        "urgency": "Medium",
+        "description": "Monitor the customer and provide targeted engagement.",
+        "channel": "Customer engagement"
+    }
+
+
+def generate_recovery_message(form, result):
+    """
+    Generates a simple personalized recovery message
+    from model/business signals.
+    """
+
+    action = result["recovery_action"]["action"]
+
+    if action == "Retention offer":
+        return (
+            f"We value your continued subscription. Based on your current "
+            f"{form['contract'].lower()} plan, we would like to offer you "
+            f"a personalized retention option that may provide better "
+            f"long-term value."
+        )
+
+    if action == "Onboarding intervention":
+        return (
+            "We noticed that you are still relatively new to the service. "
+            "Our team would be happy to help you get more value from your "
+            "subscription and resolve any setup or usage issues."
+        )
+
+    if action == "Plan optimization":
+        return (
+            "We would like to review your current plan with you and identify "
+            "an option that better matches your usage and monthly budget."
+        )
+
+    if action == "Payment experience review":
+        return (
+            "We would like to make your billing experience easier. "
+            "Our team can help review your current payment setup and "
+            "available payment options."
+        )
+
+    return (
+        "Thank you for being a valued customer. We are continuing to "
+        "improve your experience and are here if you need any assistance."
+    )
+
+
+# ---------------------------------------------------------
+# Complete prediction pipeline
+# ---------------------------------------------------------
+
+def analyze_customer(form):
+    features = build_features(form)
+    features_scaled = scaler.transform(features)
+
+    pred = model.predict(features_scaled)[0]
+    prob = float(model.predict_proba(features_scaled)[0][1])
+
+    monthly_charges = float(form["monthly"])
+    tenure = int(form["tenure"])
+
+    risk_level = get_risk_level(prob)
+
+    revenue_at_risk = calculate_revenue_at_risk(
+        monthly_charges,
+        prob
+    )
+
+    priority_score = calculate_priority_score(
+        probability=prob,
+        monthly_charges=monthly_charges,
+        tenure=tenure,
+        contract=form["contract"]
+    )
+
+    priority_label = get_priority_label(priority_score)
+
+    risk_factors = get_risk_factors(
+        form,
+        prob
+    )
+
+    recovery_action = get_recovery_action(
+        form,
+        prob,
+        priority_score
+    )
+
+    result = {
+        "will_churn": bool(pred == 1),
+        "probability": round(prob * 100, 1),
+        "risk_level": risk_level,
+
+        "revenue_at_risk": round(revenue_at_risk, 2),
+
+        "priority_score": priority_score,
+        "priority_label": priority_label,
+
+        "risk_factors": risk_factors,
+        "recovery_action": recovery_action
+    }
+
+    result["recovery_message"] = generate_recovery_message(
+        form,
+        result
+    )
+
+    return result
+
+
+# ---------------------------------------------------------
+# Web routes
+# ---------------------------------------------------------
+
+@app.route("/")
+def home():
+    result = session.pop("result", None)
+    form_data = session.pop("form_data", None)
+    error = session.pop("error", None)
+
+    return render_template(
+        "index.html",
+        result=result,
+        form_data=form_data,
+        error=error,
+        metrics=metrics
+    )
+
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    try:
+        form = request.form
+
+        # Run prediction
+        result = analyze_customer(form)
+
+        # Save result temporarily for the redirect
+        session["result"] = result
+        session["form_data"] = form.to_dict()
+
+        # Redirect to clean URL
+        return redirect("/")
+
+    except Exception as e:
+        session["error"] = str(e)
+        return redirect("/")
+
+
+
+# ---------------------------------------------------------
+# Dataset analytics dashboard (descriptive, based on CSV)
+# ---------------------------------------------------------
+
+DATA_PATH = os.path.join(BASE_DIR, "model", "churn_data.csv")
+
+
+def build_dashboard_data():
+    """Build descriptive analytics from the bundled dataset."""
+    data = pd.read_csv(DATA_PATH)
+    data["Churn"] = pd.to_numeric(data["Churn"], errors="coerce").fillna(0).astype(int)
+    data["MonthlyCharges"] = pd.to_numeric(data["MonthlyCharges"], errors="coerce").fillna(0)
+    data["Tenure"] = pd.to_numeric(data["Tenure"], errors="coerce").fillna(0)
+
+    total = int(len(data))
+    churned = int(data["Churn"].sum())
+    retained = total - churned
+    churn_rate = round((churned / total * 100), 1) if total else 0
+    monthly_revenue = round(float(data["MonthlyCharges"].sum()), 2)
+    churned_monthly_revenue = round(float(data.loc[data["Churn"] == 1, "MonthlyCharges"].sum()), 2)
+
+    def churn_by(column, labels=None):
+        grouped = data.groupby(column, dropna=False).agg(
+            customers=("Churn", "size"), churned=("Churn", "sum")
+        ).reset_index()
+        grouped["rate"] = (grouped["churned"] / grouped["customers"] * 100).round(1)
+        if labels:
+            grouped[column] = grouped[column].map(labels).fillna(grouped[column].astype(str))
+        return {
+            "labels": grouped[column].astype(str).tolist(),
+            "rates": grouped["rate"].astype(float).tolist(),
+            "customers": grouped["customers"].astype(int).tolist(),
+            "churned": grouped["churned"].astype(int).tolist()
+        }
+
+    data["TenureGroup"] = pd.cut(
+        data["Tenure"], bins=[-1, 12, 24, 48, 72],
+        labels=["0–12 months", "13–24 months", "25–48 months", "49–72 months"]
+    )
+    return {
+        "total": total, "churned": churned, "retained": retained,
+        "churn_rate": churn_rate, "monthly_revenue": monthly_revenue,
+        "churned_monthly_revenue": churned_monthly_revenue,
+        "retention_rate": round(100 - churn_rate, 1),
+        "churn_distribution": {"labels": ["Retained", "Churned"], "values": [retained, churned]},
+        "contract": churn_by("Contract"),
+        "payment": churn_by("PaymentMethod"),
+        "internet": churn_by("InternetService"),
+        "tenure": churn_by("TenureGroup"),
+        "monthly_charges": {
+            "retained": round(float(data.loc[data["Churn"] == 0, "MonthlyCharges"].mean()), 2),
+            "churned": round(float(data.loc[data["Churn"] == 1, "MonthlyCharges"].mean()), 2)
+        },
+        "updated_label": "Calculated from bundled churn_data.csv"
+    }
+
+
+@app.route("/dashboard")
+def dashboard():
+    try:
+        dashboard_data = build_dashboard_data()
+        return render_template("dashboard.html", dashboard=dashboard_data, metrics=metrics)
+    except Exception:
+        app.logger.exception("Could not build analytics dashboard")
+        return "Analytics dashboard could not load. Please check model/churn_data.csv.", 500
+
+
+
+# ---------------------------------------------------------
+# Customer data & recovery workflow
+# ---------------------------------------------------------
+@app.route("/recovery", methods=["GET", "POST"])
+def recovery_center():
+    if request.method == "POST":
+        uploaded = request.files.get("customer_csv")
+        if not uploaded or not uploaded.filename.lower().endswith(".csv"):
+            flash("Choose a .csv file to import.", "error")
+            return redirect(url_for("recovery_center"))
+        try:
+            inserted, total_rows, errors = import_customer_csv(uploaded)
+            msg = f"Imported {inserted} of {total_rows} rows and calculated churn risk."
+            if errors: msg += " Some rows were skipped: " + "; ".join(errors)
+            flash(msg, "success" if inserted else "error")
+        except Exception as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("recovery_center"))
+    risk_filter = request.args.get("risk", "All")
+    status_filter = request.args.get("status", "All")
+    query = "SELECT * FROM customers WHERE 1=1"; params=[]
+    if risk_filter in ("High", "Medium", "Low"):
+        query += " AND risk_level=?"; params.append(risk_filter)
+    if status_filter in ("Draft", "Approved", "Sent", "Skipped"):
+        query += " AND outreach_status=?"; params.append(status_filter)
+    query += " ORDER BY priority_score DESC, updated_at DESC LIMIT 500"
+    with db_connect() as conn:
+        customers = conn.execute(query, params).fetchall()
+        totals = conn.execute("SELECT COUNT(*) total, SUM(CASE WHEN risk_level='High' THEN 1 ELSE 0 END) high, SUM(CASE WHEN outreach_status='Approved' THEN 1 ELSE 0 END) approved, SUM(CASE WHEN consent=1 AND (email!='' OR phone!='') THEN 1 ELSE 0 END) reachable FROM customers").fetchone()
+        logs = conn.execute("SELECT l.*, c.name, c.external_id FROM outreach_log l JOIN customers c ON c.id=l.customer_id ORDER BY l.id DESC LIMIT 15").fetchall()
+    return render_template("recovery.html", customers=customers, totals=totals, logs=logs, risk_filter=risk_filter, status_filter=status_filter)
+
+@app.route("/recovery/<int:customer_id>/approve", methods=["POST"])
+def approve_outreach(customer_id):
+    now = datetime.now(timezone.utc).isoformat()
+    with db_connect() as conn:
+        customer = conn.execute("SELECT * FROM customers WHERE id=?", (customer_id,)).fetchone()
+        if not customer:
+            flash("Customer record not found.", "error")
+        elif not customer["consent"] or not (customer["email"] or customer["phone"]):
+            flash("Cannot approve outreach: customer contact details and recorded consent are required.", "error")
+        else:
+            conn.execute("UPDATE customers SET outreach_status='Approved', updated_at=? WHERE id=?", (now, customer_id))
+            conn.execute("INSERT INTO outreach_log (customer_id,channel,status,message,note,created_at) VALUES (?,?,?,?,?,?)", (customer_id,"Not connected","Approved draft",customer["recovery_message"],"Approved for review; no message was sent because no delivery provider is configured.",now))
+            flash("Draft approved and logged. No email or WhatsApp message was sent; delivery provider setup is still required.", "success")
+    return redirect(url_for("recovery_center"))
+
+@app.route("/recovery/<int:customer_id>/skip", methods=["POST"])
+def skip_outreach(customer_id):
+    now = datetime.now(timezone.utc).isoformat()
+    with db_connect() as conn:
+        conn.execute("UPDATE customers SET outreach_status='Skipped', updated_at=? WHERE id=?", (now, customer_id))
+        conn.execute("INSERT INTO outreach_log (customer_id,channel,status,message,note,created_at) SELECT id,'Manual','Skipped',recovery_message,'User skipped this outreach draft.',? FROM customers WHERE id=?", (now, customer_id))
+    flash("Outreach draft marked as skipped.", "success")
+    return redirect(url_for("recovery_center"))
+
+@app.route("/recovery/sample.csv")
+def sample_customer_csv():
+    sample = "Gender,SeniorCitizen,Partner,Dependents,Tenure,PhoneService,InternetService,OnlineSecurity,TechSupport,StreamingTV,Contract,PaperlessBilling,PaymentMethod,MonthlyCharges,TotalCharges,CustomerID,Name,Email,Phone,Consent\nFemale,0,Yes,No,8,Yes,Fiber optic,No,No,Yes,Month-to-month,Yes,Electronic check,89.90,719.20,CUST-001,Sample Customer,sample@example.com,+910000000000,No\n"
+    return app.response_class(sample, mimetype="text/csv", headers={"Content-Disposition":"attachment; filename=revenueguard_customer_template.csv"})
+
+# ---------------------------------------------------------
+# JSON API
+# ---------------------------------------------------------
+
+@app.route("/api/predict", methods=["POST"])
+def api_predict():
+    try:
+        data = request.get_json()
+
+        result = analyze_customer(data)
+
+        return jsonify({
+            "success": True,
+            **result
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+
+# ---------------------------------------------------------
+# Run
+# ---------------------------------------------------------
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5001))
+
+    app.run(
+        debug=False,
+        host="0.0.0.0",
+        port=port
+    )
